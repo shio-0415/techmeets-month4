@@ -1,61 +1,82 @@
-# Week9 基本課題: Repository/Serviceパターンでリファクタリング
+# Week14 基本課題・練習課題: テストコード作成
 
-Week7・8で作成したブログアプリ（投稿のCRUD機能）を、Repository/Serviceパターンに書き直しました。
+Week5〜9で構築したLaravelプロジェクト（投稿機能・ユーザー認証・Service層を持つアプリケーション）に、
+包括的なテストを追加しました。ベースとなっているのは `techmeets-month2` の `week9/基本課題`
+（Repository/Serviceパターンへのリファクタリング済みアプリケーション）です。
 
-## 設計
-- `app/Repositories/Contracts/PostRepositoryInterface.php` … Repositoryの取り決め（インターフェース）
-- `app/Repositories/PostRepository.php` … 実際のDB操作
-- `app/Services/PostService.php` … 業務ロジック（投稿者IDの付与など）
-- `app/Http/Requests/StorePostRequest.php` / `UpdatePostRequest.php` … バリデーションの分離
-- `app/Policies/PostPolicy.php` … 認可（投稿の所有者のみ編集・削除可能）
-- `app/Providers/AppServiceProvider.php` … インターフェースと実装クラスの依存性注入（DI）バインディング
+## 実行結果（検証済み）
 
-## Before / After
-
-### Before（Week8時点）
-`PostController` の中に、バリデーション・DB操作・認可チェックがすべて直接書かれていた。
-
-```php
-public function store(Request $request)
-{
-    $validated = $request->validate([
-        'title' => 'required|string|max:255',
-        'content' => 'required|string',
-    ]);
-    $validated['user_id'] = auth()->id();
-    Post::create($validated);
-    return redirect()->route('posts.index')->with('success', '投稿しました');
-}
+```
+php artisan test
+Tests: 63 passed (129 assertions)
 ```
 
-コントローラーが「バリデーション」「DB操作」を両方担当しており、テストしづらく、再利用もしにくい状態だった。
-
-### After（Week9でリファクタリング後）
-
-```php
-public function store(StorePostRequest $request)
-{
-    $this->postService->createPost($request->validated(), auth()->id());
-    return redirect()->route('posts.index')->with('success', '投稿しました');
-}
+```
+composer audit
+No security vulnerability advisories found.
 ```
 
-- バリデーションは `StorePostRequest` に分離
-- DB操作は `PostService` → `PostRepository` に分離
-- コントローラーは「リクエストを受け取り、Serviceに渡し、レスポンスを返す」だけのシンプルな役割になった
-- `PostRepositoryInterface` を介して依存しているため、将来DBの実装を変えたり、テスト時にモック（偽のRepository）に差し替えることが容易になった
+カバレッジ: **85.1%**（目標70%をクリア）
 
-## N+1問題対策
+## 基本課題
 
-投稿一覧表示時、`Post::with('user')->latest()->paginate()` のように `with()` を使い、投稿者情報を事前読み込みすることで、N+1問題（投稿の数だけ追加クエリが発生する問題）を回避している。
+- **ユニットテスト（14ケース）**: `tests/Unit/Services/PostServiceTest.php`, `PostServiceLikeTest.php`
+  - Service層はリポジトリに処理を委譲するだけなので、Mockeryでリポジトリをモック化しDBに依存しないテストにしている
+  - 正常系・異常系（存在しないIDでの例外伝播など）・境界値（perPage=1/1000、id=1など）を網羅
+- **Feature Test（CRUD全操作）**: `tests/Feature/PostControllerTest.php`（17ケース）
+  - 投稿の作成・表示・更新・削除、バリデーション（タイトル255/256文字の境界値）、認可（他人の投稿は編集・削除不可）を検証
+  - 認証系（登録・ログイン・ログアウト）は既存の `tests/Feature/Auth/*`（Breezeスキャフォールド）を活用
+- **テストカバレッジ70%以上**: 85.1%（Xdebugで計測）
+- **エッジケース**: 存在しないIDへのアクセス、未認証アクセス、二重いいねなど
+- **バリデーションテスト**: 必須項目チェック、文字数の境界値
 
-## 起動方法
+## 練習課題1: ユニットテスト（Service層）
+
+`tests/Unit/Services/PostServiceTest.php` にて、`PostRepositoryInterface` をモック化し、
+正常系・異常系・境界値の観点でテストを実施。
+
+## 練習課題2: Feature Test
+
+- ユーザー登録・ログイン・ログアウト: 既存のBreeze認証テストを活用
+- 投稿のCRUD・認可: `tests/Feature/PostControllerTest.php` で新規実装
+
+## 練習課題3: TDD実践（いいね機能）
+
+「いいね機能」をTDD（Red→Green→Refactor）で追加。
+
+1. **Red**: `tests/Unit/Services/PostServiceLikeTest.php`、`tests/Feature/PostLikeTest.php` を実装なしで先に作成し、失敗を確認
+2. **Green**: `post_likes` テーブルのマイグレーション、`Post::likedByUsers()`、
+   `PostRepositoryInterface::toggleLike()/likesCount()`、`PostService::toggleLike()`、
+   `PostController::toggleLike()`、ルート追加で最小実装
+3. **Refactor**: 「いいね済みか」の判定ロジックを `Post::isLikedBy()` としてモデルに切り出し、
+   Service層の戻り値を `['liked' => bool, 'likes_count' => int]` に統一
+
+## 静的解析・セキュリティスキャン
+
+- **ESLint**: `eslint.config.js` を追加し、`npm run lint` で `resources/js` を静的解析（エラーなし）
+- **composer audit**: 依存パッケージ（guzzle, commonmark等）を更新し、脆弱性0件を達成
+- **npm audit**: 6件→1件（低リスクかつVite本体側の依存関係で対応不可）まで削減
+- **CI**: `.github/workflows/ci.yml` で、push時にテスト・カバレッジ・composer audit・ESLint・npm auditを自動実行
+
+## セットアップ
 
 ```bash
-docker compose up -d
-docker compose exec app php artisan migrate
+composer install
 npm install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate
 npm run build
 ```
 
-http://localhost:8090/register にアクセス
+## テスト実行
+
+```bash
+php artisan test
+```
+
+## カバレッジ計測
+
+```bash
+XDEBUG_MODE=coverage php artisan test --coverage
+```
