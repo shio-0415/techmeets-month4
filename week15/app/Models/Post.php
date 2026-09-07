@@ -12,14 +12,14 @@ class Post extends Model
 
     protected $fillable = ['title', 'content', 'user_id'];
 
-            /**
+    /**
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo<User, $this>
      */
     public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(User::class);
     }
-    
+
     /**
      * この投稿に「いいね」したユーザー一覧。
      */
