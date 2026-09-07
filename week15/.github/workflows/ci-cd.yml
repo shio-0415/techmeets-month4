@@ -1,0 +1,175 @@
+name: Week15 CI/CD
+
+on:
+  push:
+    branches: ["main", "develop"]
+    paths: ["week15/**", ".github/workflows/ci-cd.yml"]
+  pull_request:
+    branches: ["main"]
+    paths: ["week15/**", ".github/workflows/ci-cd.yml"]
+
+# このリポジトリはモノレポ構成（week14, week15... がルート直下に並ぶ）なので、
+# 全ステップで week15 フォルダの中を作業ディレクトリにする
+defaults:
+  run:
+    working-directory: week15
+
+jobs:
+  # ------------------------------------------------------------
+  # 1. Lint: PHP CS Fixer + PHPStan（必須項目1 / 練習課題2）
+  # ------------------------------------------------------------
+  lint:
+    name: Lint (PHP CS Fixer + PHPStan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('week15/composer.lock') }}
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: PHP CS Fixer (coding style check)
+        run: composer lint
+
+      - name: PHPStan (static analysis)
+        run: composer analyse
+
+  # ------------------------------------------------------------
+  # 2. Test: PHPUnit + カバレッジレポート（必須項目2 / 練習課題1）
+  # ------------------------------------------------------------
+  test:
+    name: PHPUnit tests + coverage
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: pcov
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Generate app key
+        run: php artisan key:generate
+
+      - name: Run tests with coverage (text + HTML, min 70%)
+        run: |
+          php artisan test --coverage --coverage-html=coverage-html --min=70 | tee coverage-output.txt
+
+      # 練習課題1: カバレッジレポートをGitHub Actions上に表示
+      - name: Publish coverage summary to job summary
+        if: always()
+        run: |
+          echo "## 📊 Test & Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "Tests:|Total:" coverage-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML coverage report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-report
+          path: week15/coverage-html
+          retention-days: 14
+
+      - name: Composer security audit
+        run: composer audit
+
+      - name: npm audit
+        run: npm audit --audit-level=moderate
+
+  # ------------------------------------------------------------
+  # 3-a. Deploy: develop ブランチへのpush → ステージング環境（練習課題3）
+  # ------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+
+      - name: Install Composer dependencies (production, no dev)
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Package build artifact
+        run: |
+          mkdir -p build
+          rsync -a --exclude='node_modules' --exclude='tests' --exclude='.git' ./ build/ 2>/dev/null || cp -r ./* build/ 2>/dev/null || true
+
+      - name: Deploy (simulated)
+        run: bash scripts/deploy.sh staging
+
+  # ------------------------------------------------------------
+  # 3-b. Deploy: main ブランチへのpush → 本番環境（必須項目3 / 練習課題3）
+  # ------------------------------------------------------------
+  deploy-production:
+    name: Deploy to Production
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+
+      - name: Install Composer dependencies (production, no dev)
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Package build artifact
+        run: |
+          mkdir -p build
+          rsync -a --exclude='node_modules' --exclude='tests' --exclude='.git' ./ build/ 2>/dev/null || cp -r ./* build/ 2>/dev/null || true
+
+      - name: Deploy (simulated)
+        run: bash scripts/deploy.sh production

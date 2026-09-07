@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ "week9/**", "main" ]
+  pull_request:
+    branches: [ "week9/**", "main" ]
+
+jobs:
+  php-tests:
+    name: PHPUnit (Unit + Feature) with coverage threshold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: pcov
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Generate app key
+        run: php artisan key:generate
+
+      - name: Run migrations (SQLite in-memory, per phpunit.xml)
+        run: php artisan config:clear
+
+      # カバレッジ70%未満ならビルドを失敗させる
+      - name: Run tests with coverage threshold (70%)
+        run: php artisan test --coverage --min=70
+
+      # 依存パッケージの既知の脆弱性チェック（Composer 2.4+ に組み込み）
+      - name: Composer security audit
+        run: composer audit
+
+  js-lint-audit:
+    name: ESLint + npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      # 依存パッケージの既知の脆弱性チェック（moderate以上で失敗）
+      - name: npm audit
+        run: npm audit --audit-level=moderate

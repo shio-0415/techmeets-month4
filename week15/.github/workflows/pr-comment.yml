@@ -1,0 +1,73 @@
+# 【任意/ボーナス課題】PRへのコメントでテスト結果を通知する
+#
+# 課題本文にある通り、これは必須ではありません。余裕があれば有効化してみてください。
+# 有効化するには、このファイル名から `.disabled` を外すか、そのままリポジトリに置いておけば
+# pull_request イベントで自動的に動きます。
+
+name: Week15 PR Comment (bonus)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths: ["week15/**"]
+
+defaults:
+  run:
+    working-directory: week15
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  comment-test-results:
+    name: Run tests and comment results on PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: pcov
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Generate app key
+        run: php artisan key:generate
+
+      - name: Run tests with coverage
+        id: run_tests
+        run: |
+          set +e
+          php artisan test --coverage --min=70 > coverage-output.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat coverage-output.txt
+
+      - name: Post results as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('week15/coverage-output.txt', 'utf8');
+            const exitCode = '${{ steps.run_tests.outputs.exit_code }}';
+            const status = exitCode === '0' ? '✅ テスト成功' : '❌ テスト失敗';
+
+            // 出力が長すぎる場合に備えて末尾だけ抜粋
+            const trimmed = output.length > 6000
+              ? '...(省略)...\n' + output.slice(-6000)
+              : output;
+
+            const body = `## ${status}\n\n<details><summary>テスト結果を表示</summary>\n\n\`\`\`\n${trimmed}\n\`\`\`\n\n</details>`;
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
