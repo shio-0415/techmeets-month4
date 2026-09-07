@@ -105,3 +105,4 @@ composer analyse     # PHPStanで静的解析
 2. `main` ブランチへマージ → 本番へのデプロイジョブが動くことを確認
 3. Pull Requestを作ってみる → lint・testのみ動き、デプロイは動かないことを確認
 4. GitHubの「Actions」タブで各ジョブの実行結果、「Summary」タブでカバレッジレポートを確認
+
